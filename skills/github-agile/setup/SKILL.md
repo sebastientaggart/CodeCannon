@@ -243,7 +243,7 @@ A value counts as "set" if it is present, uncommented, and non-empty in `.codeca
 
 Check whether the agent's permission configuration covers the shell commands Code Cannon skills use. Read the `commands:` list in `CodeCannon/permissions.yaml` for the required command prefixes. Use **only** the `commands:` key — commands under `validate_only:` (e.g. `cd`) are deliberately never emitted as allow rules, so they must not be reported as missing.
 
-**If your harness reads its permission allowlist from `.claude/settings.json`:** Read `.claude/settings.local.json` (if it exists) and `.claude/settings.json` (if it exists). Collect all `Bash(...)` entries from the `permissions.allow` arrays in both files. For each prefix in `commands:`, check whether an allow rule covers it (e.g. `Bash(git:*)` or `Bash(git *)` covers `git`).
+**If the harness you are running in reads its permission allowlist from `.claude/settings.json`:** Decide this from what you know about your own harness — the file existing in the project is not evidence, because sync commits it for the `claude` adapter regardless of which agent is running. Read `.claude/settings.local.json` (if it exists) and `.claude/settings.json` (if it exists). Collect all `Bash(...)` entries from the `permissions.allow` arrays in both files. For each prefix in `commands:`, check whether an allow rule covers it (e.g. `Bash(git:*)` or `Bash(git *)` covers `git`).
 
 If all prefixes are covered, display `Agent permissions: all skill commands pre-approved` and continue to Phase 3.
 
