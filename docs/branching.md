@@ -39,7 +39,7 @@ This supports a QA gate between merging code and shipping to production. After `
 **Skill behavior in two-branch mode:**
 - `/submit-for-review` targets `BRANCH_DEV` and uses `Closes #N` (inert until promotion; `Related to #N` for context-only references)
 - `/submit-for-review` applies `QA_READY_LABEL` to the linked issue (if configured)
-- `/deploy` runs from `BRANCH_DEV` — bumps version, opens a promotion PR from `BRANCH_DEV` to `BRANCH_PROD` with `Closes #N` to auto-close issues
+- `/deploy` runs from `BRANCH_DEV` — bumps version, opens a promotion PR into `BRANCH_PROD` (from a throwaway `release/vX.Y.Z` branch cut at the head of `BRANCH_DEV`) with `Closes #N` to auto-close issues
 
 ## Three-branch development
 
@@ -93,6 +93,8 @@ If you do end up with parallel branches that conflict, the cleanest resolution i
 Branch cleanup is optional housekeeping. Some teams keep every branch forever for history, others prune after each sprint. Code Cannon has no opinion and enforces nothing — do whatever fits your workflow.
 
 **Easiest baseline:** enable GitHub's *Settings → General → "Automatically delete head branches"*. Every merged PR then deletes its remote branch automatically. This handles the remote side with zero ongoing effort.
+
+The setting deletes the head branch of *any* merged PR, long-lived branches included. `/deploy` is safe: it promotes from a throwaway `release/vX.Y.Z` branch, so the integration or staging branch is never a PR head. A PR you open yourself with a long-lived branch as its head is not — in three-branch mode that includes the `make promote` PR (integration → staging). Before merging one with the setting on, protect the head branch against deletion (a branch protection rule or ruleset), or restore it afterwards with the "Restore branch" button on the merged PR.
 
 **Manual cleanup:** the following one-liners are safe to re-run any time. They assume the default branch names `main`, `dev`, and `test` — if yours differ, substitute your own names everywhere they appear below (both in the `git branch --merged` argument and in the `grep` exclusion list).
 

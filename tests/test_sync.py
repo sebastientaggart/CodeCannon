@@ -477,11 +477,26 @@ class TestDeployModeRendering(unittest.TestCase):
     def test_critical_unqualified_ref_note_survives_in_multibranch(self):
         # The platform-behaviour note (unqualified #N populates closingIssuesReferences)
         # is load-bearing and belongs to the promotion path only.
-        self.assertEqual(self._render("trunk").count("Critical:"), 0)
+        self.assertEqual(self._render("trunk").count("closingIssuesReferences"), 0)
         for mode in ("two-branch", "three-branch"):
             self.assertEqual(
-                self._render(mode).count("Critical:"), 1,
+                self._render(mode).count("closingIssuesReferences"), 1,
                 f"{mode} lost the unqualified-#N platform note")
+
+    def test_release_pr_head_is_a_throwaway_branch_in_multibranch(self):
+        # GitHub's auto-delete removes a merged PR's head branch, so the deploy
+        # branch must never be the release PR's head. #223.
+        self.assertNotIn("Automatically delete head branches", self._render("trunk"))
+        for mode in ("two-branch", "three-branch"):
+            out = self._render(mode)
+            self.assertIn("--head release/<version-tag>", out, f"{mode} PR head")
+            self.assertNotIn("{{BRANCH_PROD}} --head <deploy-branch>", out)
+            self.assertIn("git push origin <deploy-branch>:refs/heads/release/<version-tag>",
+                          out, f"{mode} missing throwaway-branch push")
+            self.assertIn("git push origin --delete release/<version-tag>", out,
+                          f"{mode} missing throwaway-branch cleanup")
+            self.assertIn("Automatically delete head branches", out,
+                          f"{mode} lost the auto-delete platform note")
 
     def test_step_numbering_matches_mode(self):
         trunk_steps = re.findall(r"^## Step (\d+) ", self._render("trunk"), re.M)
