@@ -330,14 +330,12 @@ class TestApplyConditionals(unittest.TestCase):
         self.assertNotIn("{{#if", result)
         self.assertNotIn("{{/if}}", result)
 
-    def test_unmatched_close_warns(self):
-        """Stopping on a stray {{/if}} leaves every later conditional in the
-        file unprocessed — that must not happen silently at exit 0. #221."""
+    def test_unmatched_close_stops_processing(self):
+        """A stray {{/if}} strands every later conditional in the file. This
+        documents the behaviour validate_conditionals exists to gate — the sync
+        must never reach apply_conditionals with such a file. #221."""
         text = "{{/if}}\n{{#if FOO}}\nbody\n{{/if}}"
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            sync.apply_conditionals(text, {"FOO": "yes"})
-        self.assertIn("no matching {{#if}}", buf.getvalue())
+        self.assertEqual(sync.apply_conditionals(text, {"FOO": "yes"}), text)
 
     def test_digit_bearing_key_is_a_directive(self):
         """_IF_OPEN's charset must stay in step with find_unresolved: a key one
@@ -1040,6 +1038,31 @@ class TestValidateOutputPaths(unittest.TestCase):
         self.assertIn("output_path_override has undefined placeholder(s): PROMPT_PATH",
                       errors[0])
 
+    def test_absolute_override_is_reported(self):
+        """sync_skill joins the override onto project_root, and Path('/p') /
+        '/etc/x' is '/etc/x' — an absolute override escapes the project. #221."""
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "/etc/prompt.md"',
+                           "body")
+        errors = sync.validate_output_paths([path], {})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("is absolute", errors[0])
+
+    def test_traversing_override_is_reported(self):
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "../outside/x.md"',
+                           "body")
+        errors = sync.validate_output_paths([path], {})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("escapes the project root", errors[0])
+
+    def test_empty_override_is_left_to_the_name_check(self):
+        """Resolving to empty makes sync_skill render it as an ordinary skill,
+        so the name check owns it and this validator stays quiet."""
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "{{P}}"', "body")
+        self.assertEqual(sync.validate_output_paths([path], {"P": ""}), [])
+
     def test_digit_bearing_override_placeholder_is_reported(self):
         """find_unresolved is load-bearing here, so its charset must match
         digit-bearing keys or {{PROMPT_PATH2}} ships as a literal path. #221."""
@@ -1049,6 +1072,46 @@ class TestValidateOutputPaths(unittest.TestCase):
         errors = sync.validate_output_paths([path], {"OTHER": "x"})
         self.assertEqual(len(errors), 1)
         self.assertIn("PROMPT_PATH2", errors[0])
+
+
+class TestValidateConditionals(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _skill(self, body):
+        return _make_skill(self.tmpdir, "s", 'name: s\ndescription: "d"', body)
+
+    def test_balanced_passes(self):
+        path = self._skill("{{#if FOO}}\na\n{{/if}}\n{{#if !BAR}}\nb\n{{/if}}")
+        self.assertEqual(sync.validate_conditionals([path]), [])
+
+    def test_nested_balanced_passes(self):
+        path = self._skill("{{#if OUTER}}\n{{#if INNER}}\na\n{{/if}}\n{{/if}}")
+        self.assertEqual(sync.validate_conditionals([path]), [])
+
+    def test_unmatched_close_reported(self):
+        path = self._skill("a\n{{/if}}\nb")
+        errors = sync.validate_conditionals([path])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("{{/if}} with no matching {{#if}}", errors[0])
+
+    def test_unclosed_open_reported(self):
+        """The mirror case: apply_conditionals returns the text untouched, so
+        the literal directive line ships into every generated SKILL.md. #221."""
+        path = self._skill("{{#if FOO}}\nbody")
+        errors = sync.validate_conditionals([path])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("{{#if}} with no matching {{/if}}", errors[0])
+
+    def test_error_carries_group_and_line(self):
+        path = self._skill("a\nb\n{{/if}}")
+        errors = sync.validate_conditionals([path])
+        self.assertIn(f"{path.parent.parent.name}/s/SKILL.md:", errors[0])
 
 
 class TestValidatePlaceholders(unittest.TestCase):
@@ -1477,6 +1540,26 @@ class TestMainCLI(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 1)
             self.assertIn("other-name", buf.getvalue())
 
+    def test_unbalanced_conditional_blocks_write(self):
+        """An unbalanced directive silently strands every later block in the
+        file, and --dry-run can't see it (it compares against equally-broken
+        committed output), so the gate must stop the write. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "good-skill", 'name: good-skill\ndescription: "d"')
+            skill = self.fake_root / "skills" / "testgroup" / "good-skill" / "SKILL.md"
+            skill.write_text(skill.read_text() + "\n{{#if FOO}}\nstranded\n")
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    with contextlib.redirect_stdout(buf):
+                        with self.assertRaises(SystemExit) as ctx:
+                            sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            self.assertIn("Conditional validation failed", buf.getvalue())
+            written = list((Path(tmpdir) / "project").rglob("SKILL.md"))
+            self.assertEqual(written, [], "nothing should be written")
+
     def test_validate_pass_messages_state_their_scope(self):
         """Other groups are checked without placeholder resolution and their
         overrides aren't checked at all, so the pass lines must not imply full
@@ -1493,7 +1576,7 @@ class TestMainCLI(unittest.TestCase):
                         sync.main()
             out = buf.getvalue()
             self.assertIn("other groups checked without placeholder resolution", out)
-            self.assertIn("all override placeholders in testgroup are defined", out)
+            self.assertIn("all override paths in testgroup are in-project", out)
 
     def test_name_violation_in_non_enabled_group_does_not_block_write(self):
         """Non-enabled groups are never handed to sync_skill, so they can't

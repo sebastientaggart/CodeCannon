@@ -2,7 +2,17 @@
 
 Code Cannon skills follow the [Agent Skills](https://agentskills.io) open standard: each skill is a `<skill-name>/SKILL.md` folder with YAML frontmatter (`name`, `description`). Adapters no longer translate between per-tool formats — they just decide which standard skills directories to render into.
 
-Spec compliance is enforced on every sync path, not just under `--validate`: if a skill's frontmatter `name` is missing, violates the spec, or doesn't match its directory name — or its `description` is missing — `sync.py` stops with a non-zero exit before writing anything. This keeps a rename on one side of the pair from silently shipping mismatched output to consumer repos. Entries declaring `output_path_override` are exempt, since they render as bare files with no frontmatter and so aren't skills in the spec sense — but only when the override resolves to a real path. If its placeholder is set to an empty value the entry renders as an ordinary skill and is held to the spec like any other; if the placeholder is undefined entirely, that is reported as its own error rather than exempted. The write path enforces this over the group being synced — those are the skills that would produce bad output. Run from inside the Code Cannon repo itself, `--validate` widens the audit to every skill group, so a name or description violation in a group nobody has turned on still fails CI, which runs `--validate`. A work-in-progress skill in an unrelated group therefore doesn't block a local sync. Override placeholders resolve against the enabled group's config, so a non-enabled group's `output_path_override` is checked only for its raw value; an undefined placeholder in one surfaces when that group is enabled.
+### Validation
+
+`sync.py` refuses to write output it knows is broken. These checks run on **every** sync path — plain `sync.py`, `--dry-run`, and `--validate` alike — and stop the run with a non-zero exit before anything is written:
+
+- **Skill names.** A frontmatter `name` that is missing, violates the spec, or doesn't match its directory name — or a missing `description` — fails the sync. This keeps a rename on one side of the pair from silently shipping mismatched output to consumer repos.
+- **Output paths.** An `output_path_override` must resolve to a relative, in-project path. One still holding an undefined placeholder, one that is absolute, and one traversing out with `..` are all rejected.
+- **Conditionals.** `{{#if}}` and `{{/if}}` must balance. An unbalanced directive strands every later block in the file, so the literal directive lines and the bodies of blocks that should have been stripped would ship into the output.
+
+Entries declaring `output_path_override` are exempt from the name check, since they render as bare files with no frontmatter and so aren't skills in the spec sense — but only when the override resolves to a real path. If its placeholder resolves to an empty value the entry renders as an ordinary skill and is held to the spec like any other.
+
+**Scope.** The write path checks the group being synced, since those are the only skills that can produce bad output — a work-in-progress skill in an unrelated group won't block a local sync. Run from inside the Code Cannon repo itself, `--validate` widens the audit to every skill group, and CI runs `--validate`, so a violation in a group nobody has turned on still fails there. Placeholders resolve against the enabled group's config, so a non-enabled group's `output_path_override` is checked only for its raw value; an undefined placeholder in one surfaces when that group is enabled.
 
 ## Supported adapters
 
