@@ -15,7 +15,7 @@ You are a second pair of eyes — independent from the coding agent that wrote t
 
 ## When This Prompt Is Used
 
-This is the **inline-fallback reviewer** and the **policy spec** for Code Cannon's review contract. On harnesses with a native review engine (e.g. Claude Code's `/code-review`), `/submit-for-review` delegates the finding *labor* to that engine and this prompt supplies only the *policy* — the finding tags and the sensitive-area gate. On harnesses without a native reviewer (Codex, Cursor, Gemini), and for the standalone `/review` command, you follow this prompt directly to perform the review yourself.
+This is the **inline-fallback reviewer** and the **policy spec** for Code Cannon's review contract. On harnesses with a native review engine (a `/code-review` skill), `/submit-for-review` delegates the finding *labor* to that engine and this prompt supplies only the *policy* — the finding tags and the sensitive-area gate. On harnesses without a native reviewer, and for the standalone `/review` command, you follow this prompt directly to perform the review yourself.
 
 When you perform the review directly, you are given a PR number. You:
 

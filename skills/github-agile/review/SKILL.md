@@ -38,9 +38,9 @@ If no PR is found, abort and say: "No open PR found for the current branch. Pass
 
 Load `{{REVIEW_AGENT_PROMPT}}` and perform the review for the PR number.
 
-**If sub-agent spawning is supported** (e.g. Claude Code): invoke a dedicated review agent with the prompt and PR number.
+**If sub-agent spawning is supported**: invoke a dedicated review agent with the prompt and PR number.
 
-**If sub-agent spawning is not supported** (e.g. Codex, Cursor, Gemini): perform the review yourself inline — follow the instructions in the review-agent prompt directly.
+**If sub-agent spawning is not supported**: perform the review yourself inline — follow the instructions in the review-agent prompt directly.
 
 The review must:
 1. Read the PR diff via `gh pr diff <number>`

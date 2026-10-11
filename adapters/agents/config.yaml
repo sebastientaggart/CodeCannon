@@ -7,8 +7,9 @@ agent: agents
 description: Shared Agent Skills output (Codex CLI, Cursor, Gemini CLI)
 output_directory: .agents/skills
 argument_hint: false
+# notes: invocation mechanics only (how skills are triggered, where files
+# land). Never record what a tool can or cannot do — see "Backend capability
+# claims" in AGENTS.md.
 notes: |
-  Sub-agent spawning (used in the /submit-for-review review step) is not
-  available in these tools. That step must be performed manually by pasting
-  the review-agent prompt into a new session. Skills are triggered by
-  description matching, or by name where the tool supports it.
+  Skills are triggered by description matching, or by name where the tool
+  supports it.

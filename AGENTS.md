@@ -108,6 +108,14 @@ Calibrate the prune against the **weakest** supported harness and model size, no
 
 `story.md` is the reference shape: overwhelmingly *what* rather than *how*, with business rules collected under a `## Hard rules` section at the end and procedure written only where sequencing genuinely matters. Converge older skills toward it.
 
+### Backend capability claims
+
+Never commit a statement about what a specific agent backend can or cannot do — in skills, adapter configs, or docs. "Tool X does not support sub-agents" is true the day it is written and wrong within months; nothing fails when it goes stale, so it stays wrong until someone happens to notice.
+
+- **Phrase capability-conditionally.** Ask the running agent about itself: "**If sub-agent spawning is supported**: … **If it is not**: …" (`/review` Step 2 is the reference). No "(e.g. Tool X)" parentheticals naming which backend falls on which side.
+- **Mechanics vs availability.** Adapter `notes:` and `docs/adapters.md` describe invocation mechanics — where files land, how a skill is triggered, which config file a tool reads. Those are slow-moving facts about the integration. Feature availability is a fast-moving fact about the vendor; leave it out.
+- **No capability matrix**, in any form. A corrected table is the same liability with a later expiry date.
+
 ## Skill anatomy
 
 Each skill in `skills/` is an [Agent Skills](https://agentskills.io) folder — `skills/<group>/<name>/SKILL.md`:
@@ -190,7 +198,7 @@ Most tools that support Agent Skills read `.agents/skills/` already — check wh
 
 1. Create `adapters/{name}/config.yaml` — set `agent` and `output_directory` (the tool's project skills directory).
 2. Test with `./sync.py --skill start`.
-3. Document any adapter limitations in `config.yaml` under `notes`.
+3. Document invocation mechanics in `config.yaml` under `notes` — never feature availability (see **Backend capability claims**).
 4. Update `docs/adapters.md`.
 
 ### Adding a new skill
