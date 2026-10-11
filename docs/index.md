@@ -147,7 +147,7 @@ Code Cannon skills are agent-agnostic, but each agent has its own quirks. This s
 
 ### Other agents
 
-Permission and approval systems differ by agent and change often, so this page does not describe them. If your agent prompts for shell commands, pre-approve the same prefixes listed above (`git`, `gh`, `make`, `python3`, `./sync.py`, `mkdir`, `mktemp`) using whatever mechanism its current documentation describes, and make sure `gh` has network access if the agent runs sandboxed.
+Permission and approval systems differ by agent and change often, so this page does not describe them. If your agent prompts for shell commands, pre-approve the command prefixes listed under `commands:` in `CodeCannon/permissions.yaml` using whatever mechanism its current documentation describes, and make sure `gh` has network access if the agent runs sandboxed.
 
 ## Further reading
 

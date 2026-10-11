@@ -249,7 +249,7 @@ If all prefixes are covered, display `Agent permissions: all skill commands pre-
 
 If any are missing, report them as `Bash(<cmd>:*)` allow rules the user can optionally add to `.claude/settings.local.json` (git-ignored) or `.claude/settings.json` (shared with team) — pointing at `docs/index.md` for a full example — and note that commands can also be approved individually when prompted. Do not modify any settings file. This is advisory only.
 
-**Otherwise:** Skip this phase silently — permission systems vary by harness, and the docs cover them separately.
+**Otherwise:** Skip this phase silently — permission systems vary by harness.
 
 ---
 

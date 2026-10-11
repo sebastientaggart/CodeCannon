@@ -184,7 +184,7 @@ If `{{REVIEW_GATE}}` is `"off"`, skip directly to Step 8 (merge without review).
 
 Otherwise, review this PR. **Separate the labor from the policy:** the *labor* (finding issues) uses the best review engine available on your harness; the *policy* (the sensitive-area gate and the finding contract) is owned by Code Cannon and applied identically on every harness. Whichever path runs, it must end by posting a PR comment in the **CC review contract** — `[CRITICAL]` / `[WARNING]` / `[NOTE]` findings plus a `Verdict: APPROVE` or `Verdict: REQUEST CHANGES` line — so Step 8 can route on it.
 
-**If a native `/code-review` skill is available**: run it, then apply the CC policy yourself.
+**If your harness provides a native `/code-review` skill that accepts an effort level and a `--comment` flag** (the invocation in item 1 below): run it, then apply the CC policy yourself.
 
 1. Invoke the review at the configured depth: `/code-review {{REVIEW_EFFORT}} --comment`. You are on the feature branch with the PR open, so `/code-review` reviews this branch's diff (the PR's changes) and `--comment` posts its findings to the PR. (`{{REVIEW_EFFORT}}` is the depth dial — `low` / `medium` / `high`; deeper costs more. Do not pass a PR number — that positional is only for the `ultra` cloud path.)
 {{#if SENSITIVE_AREAS_GATE}}
@@ -201,7 +201,7 @@ Otherwise, review this PR. **Separate the labor from the policy:** the *labor* (
    - A purely informational observation → `[NOTE]`.
    - Verdict is `REQUEST CHANGES` if any `[CRITICAL]` is present (including a sensitive-area finding), otherwise `APPROVE`.
 
-**If `/code-review` is not available**: review inline — load `{{REVIEW_AGENT_PROMPT}}` and follow it directly. That prompt already emits the CC contract and enforces the sensitive-area gate. Do **not** switch branches or check out the PR — you share the operator's working tree.
+**Otherwise** (no `/code-review` skill, or one with a different interface): review inline — load `{{REVIEW_AGENT_PROMPT}}` and follow it directly. That prompt already emits the CC contract and enforces the sensitive-area gate. Do **not** switch branches or check out the PR — you share the operator's working tree.
 
 Either path must:
 1. Cover the PR diff (read relevant files for context, not the diff in isolation).
