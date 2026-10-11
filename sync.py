@@ -291,11 +291,9 @@ def apply_conditionals(text, values):
                 break
         if open_idx is None:
             # Malformed: this {{/if}} has no matching open. Stopping here leaves
-            # every remaining conditional in the file unprocessed, so literal
-            # directive lines and blocks that should have been stripped ship
-            # into the output — say so rather than failing silently at exit 0.
-            print("  Warning: {{/if}} with no matching {{#if}} — conditional "
-                  "blocks in this skill were left unprocessed")
+            # every remaining conditional in the file unprocessed. Reported with
+            # file and line by validate_conditionals, which gates the sync, so
+            # this can't be reached for a skill that is about to be written.
             break
 
         m = _IF_OPEN.match(lines[open_idx])
@@ -610,23 +608,64 @@ def validate_skill_names(skill_files, project_config=None):
 
 
 def validate_output_paths(skill_files, project_config):
-    """Check that every `output_path_override` resolves to a usable path.
+    """Check that every `output_path_override` names a writable in-project path.
 
-    An override still holding an undefined placeholder would have `sync_skill`
-    write to a literal `{{FOO}}` directory. Reported separately from the name
-    check because the fix is a missing `config:` key in .codecannon.yaml, not
-    a frontmatter change.
+    `sync_skill` joins the override onto project_root, so three shapes are
+    rejected: one still holding an undefined placeholder (it would create a
+    literal `{{FOO}}` directory), an absolute path (`Path(root) / "/etc/x"` is
+    `/etc/x`, escaping the project entirely), and one traversing out with `..`.
+    Reported separately from the name check because the fix is a config or path
+    change, not a frontmatter one.
     """
     errors = []
     for skill_path in skill_files:
         fm, _ = parse_frontmatter(skill_path.read_text())
+        label = skill_label(skill_path)
         override = fm.get('output_path_override', '')
         if not override:
             continue
-        unresolved = sorted(set(find_unresolved(apply_placeholders(override, project_config))))
+        resolved = apply_placeholders(override, project_config)
+        unresolved = sorted(set(find_unresolved(resolved)))
         if unresolved:
-            errors.append(f"  {skill_label(skill_path)}: output_path_override has "
+            errors.append(f"  {label}: output_path_override has "
                           f"undefined placeholder(s): {', '.join(unresolved)}")
+            continue
+        if not resolved:
+            continue  # renders as an ordinary skill; the name check owns it
+        parts = Path(resolved).parts
+        if Path(resolved).is_absolute():
+            errors.append(f"  {label}: output_path_override '{resolved}' is absolute; "
+                          "it must be relative to the project root")
+        elif '..' in parts:
+            errors.append(f"  {label}: output_path_override '{resolved}' escapes "
+                          "the project root")
+    return errors
+
+
+def validate_conditionals(skill_files):
+    """Check that every {{#if}} has a matching {{/if}} and vice versa.
+
+    apply_conditionals stops at the first unbalanced directive, leaving every
+    later block in the file unprocessed — literal directive lines, and the
+    bodies of blocks that should have been stripped, ship into the output.
+    Nothing downstream catches it: find_unresolved cannot match a `{{#if X}}`
+    line, and --dry-run compares generated output against equally-broken
+    committed output, so it reports no drift.
+    """
+    errors = []
+    for skill_path in skill_files:
+        label = skill_label(skill_path)
+        open_lines = []
+        for lineno, line in enumerate(skill_path.read_text().split('\n'), 1):
+            if _IF_OPEN.match(line):
+                open_lines.append(lineno)
+            elif _IF_CLOSE.match(line):
+                if open_lines:
+                    open_lines.pop()
+                else:
+                    errors.append(f"  {label}:{lineno}: {{{{/if}}}} with no matching {{{{#if}}}}")
+        for lineno in open_lines:
+            errors.append(f"  {label}:{lineno}: {{{{#if}}}} with no matching {{{{/if}}}}")
     return errors
 
 
@@ -941,16 +980,21 @@ def main():
     # in an unrelated group blocking a local ./sync.py.
     name_errors = validate_skill_names(enabled_files, project_config)
     path_errors = validate_output_paths(enabled_files, project_config)
+    cond_errors = validate_conditionals(enabled_files)
     NAME_FAILURE_HEADER = ("Skill-name validation failed — frontmatter not "
                            "spec-compliant (see agentskills.io):")
     PATH_FAILURE_HEADER = ("Output-path validation failed — output_path_override "
-                           "placeholders not defined in config:")
-    if not args.validate and (name_errors or path_errors):
-        if name_errors:
-            report_errors(NAME_FAILURE_HEADER, name_errors, leading_blank=False)
-        if path_errors:
-            report_errors(PATH_FAILURE_HEADER, path_errors, leading_blank=bool(name_errors))
-        sys.exit(1)
+                           "does not name a writable in-project path:")
+    COND_FAILURE_HEADER = ("Conditional validation failed — unbalanced {{#if}} / "
+                           "{{/if}} directives:")
+    if not args.validate:
+        failing = [(h, e) for h, e in ((NAME_FAILURE_HEADER, name_errors),
+                                       (PATH_FAILURE_HEADER, path_errors),
+                                       (COND_FAILURE_HEADER, cond_errors)) if e]
+        if failing:
+            for i, (header, errs) in enumerate(failing):
+                report_errors(header, errs, leading_blank=bool(i))
+            sys.exit(1)
 
     # --validate: pre-flight placeholder check + permissions check, no writes
     if args.validate:
@@ -973,8 +1017,15 @@ def main():
             failed = True
         else:
             # Only the enabled group's overrides are resolvable against this config.
-            print(f"Output-path validation passed — all override placeholders in "
-                  f"{skill_group} are defined.")
+            print(f"Output-path validation passed — all override paths in "
+                  f"{skill_group} are in-project and fully resolved.")
+
+        cond_errors += validate_conditionals(other_files)
+        if cond_errors:
+            report_errors(COND_FAILURE_HEADER, cond_errors)
+            failed = True
+        else:
+            print("Conditional validation passed — all {{#if}} directives are balanced.")
 
         errors = validate_placeholders(skill_files, project_config)
         if errors:
