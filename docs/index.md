@@ -145,17 +145,9 @@ Code Cannon skills are agent-agnostic, but each agent has its own quirks. This s
 
 `defaultMode: "acceptEdits"` auto-approves file edits and common filesystem ops. `allow` rules pre-approve matching bash commands (wildcards supported). `deny` rules always win — dangerous operations still prompt. Adjust the `allow` list to match your project's tooling. (`Bash(cd:*)` is intentionally omitted — Code Cannon skills use single, statically-analyzable commands, and blessing `cd` would re-invite the compound `cd … && …` shape the allowlist is designed to avoid; `/setup`'s permission audit will not ask for it.)
 
-### Cursor
+### Other agents
 
-Cursor does not prompt for shell commands by default, so no permission configuration is needed. Skills work out of the box.
-
-### Codex
-
-Configure via the `codex` CLI's `--full-auto` flag or sandbox settings. Codex runs in a sandboxed environment, so approval prompts are less common but network access may need to be explicitly enabled for `gh` commands.
-
-### Gemini CLI
-
-Configure via `.gemini/settings.json` or the `--auto-approve` flag. Consult Gemini CLI documentation for the latest permission options.
+Permission and approval systems differ by agent and change often, so this page does not describe them. If your agent prompts for shell commands, pre-approve the command prefixes listed under `commands:` in `CodeCannon/permissions.yaml` using whatever mechanism its current documentation describes, and make sure `gh` has network access if the agent runs sandboxed.
 
 ## Further reading
 

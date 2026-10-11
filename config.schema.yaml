@@ -81,7 +81,7 @@ placeholders:
   REVIEW_EFFORT:
     description: >
       Depth dial for the review *labor* on harnesses with a native review engine
-      (e.g. Claude Code's /code-review). One of "low", "medium", "high" — deeper
+      (a /code-review skill). One of "low", "medium", "high" — deeper
       reviews cost more. Only affects how thoroughly findings are hunted; it does
       not change the sensitive-area gate or the verdict routing (those are Code
       Cannon policy and always apply). Ignored on harnesses without a native

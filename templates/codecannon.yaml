@@ -45,7 +45,7 @@ config:
   # "off": no review agent — /submit-for-review merges after CHECK_CMD passes.
   REVIEW_GATE: "ai"
 
-  # Review depth on harnesses with a native review engine (Claude Code /code-review).
+  # Review depth on harnesses with a native review engine (a /code-review skill).
   # "low" | "medium" | "high" — deeper costs more. Does not affect the sensitive-area
   # gate or verdict routing (those are policy and always apply). Ignored where there
   # is no native reviewer (those use REVIEW_AGENT_PROMPT inline).
