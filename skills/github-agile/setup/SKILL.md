@@ -174,7 +174,7 @@ Show every change before writing and ask "Apply these values to `.codecannon.yam
 | **Governed** | `BRANCH_PROD`, `BRANCH_DEV`, `REVIEW_GATE: "ai"`, `QA_READY_LABEL: "ready-for-qa"`, `QA_PASSED_LABEL: "qa-passed"`, `QA_FAILED_LABEL: "qa-failed"`, and `BRANCH_TEST` if applicable | — |
 | **Custom** | Nothing — tell the user to review the file manually | — |
 
-All profiles leave `REVIEW_EFFORT` at its default (`medium`). It only tunes review *depth* on harnesses with a native review engine (e.g. Claude Code's `/code-review`); raise it to `high` for higher-assurance projects or lower it to `low` to cut cost on low-stakes ones. It never changes the sensitive-area gate or the merge verdict.
+All profiles leave `REVIEW_EFFORT` at its default (`medium`). It only tunes review *depth* on harnesses with a native review engine (a `/code-review` skill); raise it to `high` for higher-assurance projects or lower it to `low` to cut cost on low-stakes ones. It never changes the sensitive-area gate or the merge verdict.
 
 After writing, say: "<Profile> profile applied. Check the workflow commands and run `/setup` again to finish configuration." Stop.
 
@@ -243,13 +243,13 @@ A value counts as "set" if it is present, uncommented, and non-empty in `.codeca
 
 Check whether the agent's permission configuration covers the shell commands Code Cannon skills use. Read the `commands:` list in `CodeCannon/permissions.yaml` for the required command prefixes. Use **only** the `commands:` key — commands under `validate_only:` (e.g. `cd`) are deliberately never emitted as allow rules, so they must not be reported as missing.
 
-**Claude Code:** Read `.claude/settings.local.json` (if it exists) and `.claude/settings.json` (if it exists). Collect all `Bash(...)` entries from the `permissions.allow` arrays in both files. For each prefix in `commands:`, check whether an allow rule covers it (e.g. `Bash(git:*)` or `Bash(git *)` covers `git`).
+**If your harness reads its permission allowlist from `.claude/settings.json`:** Read `.claude/settings.local.json` (if it exists) and `.claude/settings.json` (if it exists). Collect all `Bash(...)` entries from the `permissions.allow` arrays in both files. For each prefix in `commands:`, check whether an allow rule covers it (e.g. `Bash(git:*)` or `Bash(git *)` covers `git`).
 
 If all prefixes are covered, display `Agent permissions: all skill commands pre-approved` and continue to Phase 3.
 
 If any are missing, report them as `Bash(<cmd>:*)` allow rules the user can optionally add to `.claude/settings.local.json` (git-ignored) or `.claude/settings.json` (shared with team) — pointing at `docs/index.md` for a full example — and note that commands can also be approved individually when prompted. Do not modify any settings file. This is advisory only.
 
-**Other agents (Cursor, Codex, Gemini):** Skip this phase silently — Cursor doesn't prompt, and Codex/Gemini permission systems vary. The docs cover these agents separately.
+**Otherwise:** Skip this phase silently — permission systems vary by harness, and the docs cover them separately.
 
 ---
 

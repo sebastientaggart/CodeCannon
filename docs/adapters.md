@@ -25,13 +25,15 @@ The legacy adapter names `codex`, `cursor`, and `gemini` still work — each is 
 
 ### Claude Code
 
-The `claude` adapter renders skills into `.claude/skills/`. Claude Code exposes each as a `/skill-name` command and can also load it automatically by description. This adapter additionally emits the `argument-hint` frontmatter extension (from the skill's `args` field) and maintains the committed permission allowlist in `.claude/settings.json`. The `/submit-for-review` skill can spawn a review sub-agent natively.
+The `claude` adapter renders skills into `.claude/skills/`. Claude Code exposes each as a `/skill-name` command and can also load it automatically by description. This adapter additionally emits the `argument-hint` frontmatter extension (from the skill's `args` field) and maintains the committed permission allowlist in `.claude/settings.json`.
 
 ### Codex CLI, Cursor, Gemini CLI (`agents`)
 
 The `agents` adapter renders skills into `.agents/skills/`, the cross-tool location all three read. Output sticks to spec-standard frontmatter only (`name`, `description`). Skills are triggered by description matching, or by name where the tool supports it.
 
-**Limitation:** these tools do not support sub-agent spawning. The review step in `/submit-for-review` (which spawns a separate review agent) must be performed manually by pasting the review-agent prompt into a new session.
+### Feature availability
+
+These docs and the adapter configs describe *how the integration works* — where files land, how a skill is triggered. They deliberately do not say which agent supports which feature (sub-agents, a native review engine, and so on): that changes faster than this repo does, and a stale claim misleads silently. Where a skill's behaviour depends on such a feature, the skill asks the running agent — "if sub-agent spawning is supported … / if not …" — and each agent takes the branch that is true for it at the time.
 
 ## Upgrading from the pre-standard layout
 
@@ -81,6 +83,6 @@ Most tools that support Agent Skills read `.agents/skills/` already, so start by
 
 2. Test with `sync.py --skill start` against a test project.
 
-3. Document any adapter limitations in `config.yaml` under `notes`.
+3. Document invocation mechanics (how skills are triggered, where files land) in `config.yaml` under `notes`. Do not record which features the tool has or lacks — see [Feature availability](#feature-availability).
 
 4. Add the adapter name to `adapters:` in `.codecannon.yaml` for any project that should use it.
