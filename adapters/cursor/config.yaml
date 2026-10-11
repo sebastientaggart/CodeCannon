@@ -1,8 +1,4 @@
-agent: cursor
-description: Cursor agent-requested rules
-output_directory: .cursor/rules
-output_extension: .mdc
-notes: |
-  Sub-agent spawning (used in the /submit-for-review review step) is not available in Cursor.
-  That step must be performed manually by pasting the review-agent prompt into a new chat.
-  Users trigger rules via @rulename in Agent mode, or the agent requests them by description.
+# Legacy adapter name, kept so existing .codecannon.yaml files keep working.
+# Cursor reads Agent Skills from both .agents/skills/ and .cursor/skills/;
+# the old .cursor/rules/*.mdc output is superseded. Resolves to `agents`.
+alias: agents

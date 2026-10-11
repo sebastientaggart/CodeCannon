@@ -12,12 +12,12 @@
 skill_group: github-agile
 
 # Which agent adapters to generate skills for.
-# Available: claude, cursor, gemini, codex
+# Available: claude (.claude/skills/) and agents (.agents/skills/, read natively
+# by Codex CLI, Cursor, and Gemini CLI). The legacy names cursor/codex/gemini
+# still work as aliases for agents.
 adapters:
   - claude
-  - cursor
-#  - gemini
-#  - codex
+  - agents
 
 # Placeholder values substituted into skill files during sync.
 # Remove any you don't need; sync.py will warn about unresolved placeholders.

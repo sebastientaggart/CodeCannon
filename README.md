@@ -27,11 +27,11 @@ AI coding agents are powerful, but every project reinvents the same workflows: h
 
 ## The solution
 
-Code Cannon is a repository of portable agent **skill groups** — each group is a focused, domain-specific bundle of skills written once as plain markdown. A sync script reads your project config, picks the one group you've enabled, and generates agent-specific command files:
+Code Cannon is a repository of portable agent **skill groups** — each group is a focused, domain-specific bundle of skills in the [Agent Skills](https://agentskills.io) open-standard `<skill-name>/SKILL.md` format. A sync script reads your project config, picks the one group you've enabled, and renders project-configured skills into the standard directories your tools read:
 
 ```
-skills/<group>/*.md  →  sync.py + .codecannon.yaml  →  .claude/commands/*.md
-                                                      →  .cursor/rules/*.mdc
+skills/<group>/<name>/SKILL.md  →  sync.py + .codecannon.yaml  →  .claude/skills/<name>/SKILL.md   (Claude Code)
+                                                               →  .agents/skills/<name>/SKILL.md   (Codex CLI, Cursor, Gemini CLI)
 ```
 
 One source of truth for every project and every agent. Pick the group that matches how you work.

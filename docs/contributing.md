@@ -6,7 +6,7 @@ This guide covers setup and conventions for developing Code Cannon itself — no
 
 ### Pre-commit hook
 
-Generated skill files (`.claude/commands/`, `.cursor/rules/`, `.agents/skills/`, `.gemini/skills/`) must stay in sync with source skills. A pre-commit hook enforces this.
+Generated skill folders (`.claude/skills/`, `.agents/skills/`) must stay in sync with source skills. A pre-commit hook enforces this.
 
 Install it once per clone:
 

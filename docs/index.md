@@ -6,7 +6,7 @@ Code Cannon is a portable agent workflow skill library. Write your team's develo
 
 1. **Skills** live in `skills/<group>/` as plain markdown with `{{PLACEHOLDER}}` tokens for project-specific values. Each `<group>` directory is a domain-specific bundle (e.g. `github-agile`).
 2. **Your project picks one group** via `skill_group:` in `.codecannon.yaml`.
-3. **`sync.py`** reads the config, walks only the enabled group, substitutes values, wraps each skill in an agent-specific invocation header, and writes the generated files (`.claude/commands/`, `.cursor/rules/`, etc.) — flat, no group prefix.
+3. **`sync.py`** reads the config, walks only the enabled group, substitutes values, and writes each skill as a standard [Agent Skills](https://agentskills.io) folder (`.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`) — no group prefix.
 4. **Generated files** carry a hash so sync.py can detect manual edits and warn before overwriting.
 
 ## The workflow
@@ -66,7 +66,7 @@ See the [config reference](config-reference.md) for all available settings. Exac
 CodeCannon/sync.py
 ```
 
-This generates skill files for each adapter listed in your config. For Claude Code, that's `.claude/commands/*.md`. For Cursor, `.cursor/rules/*.mdc`.
+This generates skill folders for each adapter listed in your config. For Claude Code, that's `.claude/skills/<name>/SKILL.md`. For Codex CLI, Cursor, and Gemini CLI, `.agents/skills/<name>/SKILL.md`.
 
 ### 4. Copy AGENTS.md template (optional)
 

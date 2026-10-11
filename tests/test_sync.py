@@ -1,6 +1,8 @@
 """Tests for CodeCannon sync.py — the sync engine."""
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -22,23 +24,13 @@ import sync
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_skill(tmpdir, name, frontmatter, body):
-    """Write a skill markdown file into tmpdir/skills/<name>.md."""
-    skills_dir = Path(tmpdir) / "skills"
-    skills_dir.mkdir(exist_ok=True)
-    path = skills_dir / f"{name}.md"
+    """Write a skill into tmpdir/skills/<name>/SKILL.md (Agent Skills layout)."""
+    skill_dir = Path(tmpdir) / "skills" / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    path = skill_dir / "SKILL.md"
     content = f"---\n{frontmatter}\n---\n\n{body}"
     path.write_text(content)
     return path
-
-
-def _make_adapter(tmpdir, name, config_yaml, header_md=""):
-    """Write an adapter directory into tmpdir/adapters/<name>/."""
-    adapter_dir = Path(tmpdir) / "adapters" / name
-    adapter_dir.mkdir(parents=True, exist_ok=True)
-    (adapter_dir / "config.yaml").write_text(config_yaml)
-    if header_md:
-        (adapter_dir / "header.md").write_text(header_md)
-    return adapter_dir
 
 
 def _make_args(**overrides):
@@ -329,6 +321,31 @@ class TestApplyConditionals(unittest.TestCase):
         self.assertNotIn("{{#if", result)
         self.assertNotIn("{{/if}}", result)
 
+    def test_leading_underscore_key_is_a_directive(self):
+        """A key _IF_OPEN doesn't match fails to open a block, stranding its
+        {{/if}} and stopping conditional processing for the whole file. #221."""
+        text = "before\n{{#if _INTERNAL}}\nkept\n{{/if}}\nafter"
+        result = sync.apply_conditionals(text, {"_INTERNAL": "yes"})
+        self.assertIn("kept", result)
+        self.assertNotIn("{{#if", result)
+        self.assertNotIn("{{/if}}", result)
+
+    def test_unmatched_close_stops_processing(self):
+        """A stray {{/if}} strands every later conditional in the file. This
+        documents the behaviour validate_conditionals exists to gate — the sync
+        must never reach apply_conditionals with such a file. #221."""
+        text = "{{/if}}\n{{#if FOO}}\nbody\n{{/if}}"
+        self.assertEqual(sync.apply_conditionals(text, {"FOO": "yes"}), text)
+
+    def test_digit_bearing_key_is_a_directive(self):
+        """_IF_OPEN's charset must stay in step with find_unresolved: a key one
+        matches and the other doesn't is neither expanded nor reported, so the
+        literal directive line ships into generated output. #221."""
+        text = "before\n{{#if FOO2}}\nkept\n{{/if}}\nafter"
+        result = sync.apply_conditionals(text, {"FOO2": "yes"})
+        self.assertIn("kept", result)
+        self.assertNotIn("{{#if", result)
+
     def test_falsy_removes_block(self):
         text = "before\n{{#if FOO}}\nremoved\n{{/if}}\nafter"
         result = sync.apply_conditionals(text, {"FOO": ""})
@@ -420,7 +437,7 @@ class TestDeployModeRendering(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        text = (REPO_ROOT / "skills" / "github-agile" / "deploy.md").read_text()
+        text = (REPO_ROOT / "skills" / "github-agile" / "deploy" / "SKILL.md").read_text()
         cls.body = text.split("---\n", 2)[2]
 
     def _render(self, mode):
@@ -460,11 +477,26 @@ class TestDeployModeRendering(unittest.TestCase):
     def test_critical_unqualified_ref_note_survives_in_multibranch(self):
         # The platform-behaviour note (unqualified #N populates closingIssuesReferences)
         # is load-bearing and belongs to the promotion path only.
-        self.assertEqual(self._render("trunk").count("Critical:"), 0)
+        self.assertEqual(self._render("trunk").count("closingIssuesReferences"), 0)
         for mode in ("two-branch", "three-branch"):
             self.assertEqual(
-                self._render(mode).count("Critical:"), 1,
+                self._render(mode).count("closingIssuesReferences"), 1,
                 f"{mode} lost the unqualified-#N platform note")
+
+    def test_release_pr_head_is_a_throwaway_branch_in_multibranch(self):
+        # GitHub's auto-delete removes a merged PR's head branch, so the deploy
+        # branch must never be the release PR's head. #223.
+        self.assertNotIn("Automatically delete head branches", self._render("trunk"))
+        for mode in ("two-branch", "three-branch"):
+            out = self._render(mode)
+            self.assertIn("--head release/<version-tag>", out, f"{mode} PR head")
+            self.assertNotIn("{{BRANCH_PROD}} --head <deploy-branch>", out)
+            self.assertIn("git push origin <deploy-branch>:refs/heads/release/<version-tag>",
+                          out, f"{mode} missing throwaway-branch push")
+            self.assertIn("git push origin --delete release/<version-tag>", out,
+                          f"{mode} missing throwaway-branch cleanup")
+            self.assertIn("Automatically delete head branches", out,
+                          f"{mode} lost the auto-delete platform note")
 
     def test_step_numbering_matches_mode(self):
         trunk_steps = re.findall(r"^## Step (\d+) ", self._render("trunk"), re.M)
@@ -518,6 +550,21 @@ class TestFindUnresolved(unittest.TestCase):
         text = "plain text"
         result = sync.find_unresolved(text)
         self.assertEqual(result, [])
+
+    def test_finds_key_with_digits(self):
+        """Keys like PROMPT_PATH2 must be seen, or an unresolved override
+        placeholder slips through as a literal output directory. #221."""
+        self.assertEqual(sync.find_unresolved("{{PROMPT_PATH2}}"), ["PROMPT_PATH2"])
+
+    def test_finds_key_with_leading_underscore(self):
+        """The original charset accepted a leading underscore; the digit
+        widening must not have narrowed it. #221."""
+        self.assertEqual(sync.find_unresolved("{{_INTERNAL}}"), ["_INTERNAL"])
+
+    def test_ignores_all_digit_token(self):
+        """A documented regex backreference or Handlebars snippet like {{1}} is
+        not a placeholder and must not fail --validate as a missing key. #221."""
+        self.assertEqual(sync.find_unresolved("use {{1}} and {{0}} here"), [])
 
     def test_ignores_lowercase(self):
         text = "{{lowercase}}"
@@ -653,43 +700,159 @@ class TestLoadAdapter(unittest.TestCase):
         adapter = sync.load_adapter("claude")
         self.assertIsNotNone(adapter)
         self.assertEqual(adapter["name"], "claude")
-        self.assertEqual(adapter["output_directory"], ".claude/commands")
-        self.assertEqual(adapter["output_extension"], ".md")
-        self.assertIn("{description}", adapter["header_template"])
+        self.assertEqual(adapter["output_directory"], ".claude/skills")
+        self.assertTrue(adapter["argument_hint"])
 
-    def test_load_cursor_adapter(self):
-        adapter = sync.load_adapter("cursor")
+    def test_load_agents_adapter(self):
+        adapter = sync.load_adapter("agents")
         self.assertIsNotNone(adapter)
-        self.assertEqual(adapter["name"], "cursor")
-        self.assertEqual(adapter["output_extension"], ".mdc")
+        self.assertEqual(adapter["name"], "agents")
+        self.assertEqual(adapter["output_directory"], ".agents/skills")
+        self.assertFalse(adapter["argument_hint"])
+
+    def test_legacy_adapter_names_alias_to_agents(self):
+        for legacy in ("codex", "cursor", "gemini"):
+            adapter = sync.load_adapter(legacy)
+            self.assertIsNotNone(adapter, f"{legacy} should resolve via alias")
+            self.assertEqual(adapter["name"], "agents")
+            self.assertEqual(adapter["output_directory"], ".agents/skills")
 
     def test_nonexistent_adapter(self):
         adapter = sync.load_adapter("nonexistent_adapter_xyz")
         self.assertIsNone(adapter)
 
 
-class TestBuildHeader(unittest.TestCase):
+class TestBuildFrontmatter(unittest.TestCase):
 
-    def test_substitutes_skill_and_description(self):
-        adapter = {
-            "header_template": "Skill: {skill}\nDesc: {description}\n",
-        }
+    ADAPTER = {"name": "test", "argument_hint": False}
+    HINT_ADAPTER = {"name": "test", "argument_hint": True}
+
+    def test_emits_name_and_description(self):
         fm = {"description": "My description"}
-        header = sync.build_header(adapter, "deploy", fm)
-        self.assertIn("Skill: deploy", header)
-        self.assertIn("Desc: My description", header)
+        out = sync.build_frontmatter(self.ADAPTER, "deploy", fm)
+        self.assertTrue(out.startswith("---\n"))
+        self.assertIn("name: deploy\n", out)
+        self.assertIn('description: "My description"\n', out)
+        self.assertTrue(out.endswith("---\n\n"))
 
     def test_defaults_description_to_skill_name(self):
-        adapter = {"header_template": "{description}"}
-        fm = {}  # no description
-        header = sync.build_header(adapter, "test-skill", fm)
-        self.assertEqual(header, "test-skill")
+        out = sync.build_frontmatter(self.ADAPTER, "test-skill", {})
+        self.assertIn('description: "test-skill"', out)
 
-    def test_empty_header_template(self):
-        adapter = {"header_template": ""}
-        fm = {"description": "Something"}
-        header = sync.build_header(adapter, "s", fm)
-        self.assertEqual(header, "")
+    def test_argument_hint_emitted_when_adapter_opts_in(self):
+        fm = {"description": "d", "args": "issue number"}
+        out = sync.build_frontmatter(self.HINT_ADAPTER, "s", fm)
+        self.assertIn('argument-hint: "issue number"', out)
+
+    def test_argument_hint_suppressed_for_portable_adapter(self):
+        fm = {"description": "d", "args": "issue number"}
+        out = sync.build_frontmatter(self.ADAPTER, "s", fm)
+        self.assertNotIn("argument-hint", out)
+
+    def test_argument_hint_none_is_skipped(self):
+        fm = {"description": "d", "args": "none"}
+        out = sync.build_frontmatter(self.HINT_ADAPTER, "s", fm)
+        self.assertNotIn("argument-hint", out)
+
+    def test_description_quotes_are_escaped(self):
+        fm = {"description": 'say "hi"'}
+        out = sync.build_frontmatter(self.ADAPTER, "s", fm)
+        self.assertIn(r'description: "say \"hi\""', out)
+
+    def test_multiline_description_stays_a_single_yaml_line(self):
+        # A block-scalar placeholder substituted into a description must not
+        # emit a raw newline inside the quoted scalar (invalid YAML).
+        fm = {"description": "line one\nline two\ttabbed"}
+        out = sync.build_frontmatter(self.ADAPTER, "s", fm)
+        self.assertIn(r'description: "line one\nline two\ttabbed"', out)
+        desc_lines = [l for l in out.splitlines() if l.startswith("description:")]
+        self.assertEqual(len(desc_lines), 1)
+
+
+class TestValidateSkillNames(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_valid_skill_passes(self):
+        path = _make_skill(self.tmpdir, "good-skill",
+                           'name: good-skill\ndescription: "d"', "body")
+        self.assertEqual(sync.validate_skill_names([path]), [])
+
+    def test_missing_name_reported(self):
+        path = _make_skill(self.tmpdir, "no-name", 'description: "d"', "body")
+        errors = sync.validate_skill_names([path])
+        self.assertTrue(any("missing required 'name'" in e for e in errors))
+
+    def test_name_directory_mismatch_reported(self):
+        path = _make_skill(self.tmpdir, "dir-name",
+                           'name: other-name\ndescription: "d"', "body")
+        errors = sync.validate_skill_names([path])
+        self.assertTrue(any("must match its directory" in e for e in errors))
+
+    def test_spec_violating_name_reported(self):
+        path = _make_skill(self.tmpdir, "Bad_Name",
+                           'name: Bad_Name\ndescription: "d"', "body")
+        errors = sync.validate_skill_names([path])
+        self.assertTrue(any("violates the spec" in e for e in errors))
+
+    def test_missing_description_reported(self):
+        path = _make_skill(self.tmpdir, "no-desc", 'name: no-desc', "body")
+        errors = sync.validate_skill_names([path])
+        self.assertTrue(any("missing required 'description'" in e for e in errors))
+
+    def test_output_path_override_entry_is_exempt(self):
+        """A prompt-only entry renders as a bare file with no frontmatter, so
+        it isn't a skill in the spec sense and must not be held to the spec —
+        otherwise it blocks the whole sync over fields nobody reads. #221."""
+        path = _make_skill(
+            self.tmpdir, "prompt-dir",
+            'name: Some_Other_Name\noutput_path_override: ".claude/prompt.md"',
+            "body")
+        self.assertEqual(sync.validate_skill_names([path]), [])
+
+    def test_override_substituted_before_exemption(self):
+        """A placeholder override that resolves to a real path stays exempt."""
+        path = _make_skill(
+            self.tmpdir, "prompt-dir",
+            'name: Some_Other_Name\noutput_path_override: "{{PROMPT_PATH}}"',
+            "body")
+        self.assertEqual(
+            sync.validate_skill_names([path], {"PROMPT_PATH": ".claude/prompt.md"}), [])
+
+    def test_override_resolving_to_empty_is_not_exempt(self):
+        """sync_skill branches on the *substituted* override, so one whose
+        placeholder resolves to "" renders as an ordinary skill — and must be
+        held to the spec, or it emits the very directory the gate prevents."""
+        path = _make_skill(
+            self.tmpdir, "prompt-dir",
+            'name: Some_Other_Name\noutput_path_override: "{{PROMPT_PATH}}"',
+            "body")
+        errors = sync.validate_skill_names([path], {"PROMPT_PATH": ""})
+        self.assertTrue(any("violates the spec" in e for e in errors))
+
+    def test_unresolved_override_is_left_to_validate_output_paths(self):
+        """An override still holding {{FOO}} is not a frontmatter problem, so
+        the name check stays silent and validate_output_paths owns it. #221."""
+        path = _make_skill(
+            self.tmpdir, "prompt-dir",
+            'name: Some_Other_Name\noutput_path_override: "{{PROMPT_PATH}}"',
+            "body")
+        self.assertEqual(sync.validate_skill_names([path], {"OTHER": "x"}), [])
+
+    def test_errors_are_group_qualified(self):
+        """Auditing spans every group in-repo, and two groups can hold the same
+        skill name, so a bare directory name would point at the wrong file."""
+        path = _make_skill(self.tmpdir, "dir-name",
+                           'name: other-name\ndescription: "d"', "body")
+        errors = sync.validate_skill_names([path])
+        self.assertTrue(errors)
+        expected = f"{path.parent.parent.name}/dir-name/SKILL.md"
+        self.assertTrue(all(expected in e for e in errors), errors)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -705,9 +868,8 @@ class TestSyncSkill(unittest.TestCase):
         self.project_root.mkdir()
         self.adapter = {
             "name": "test",
-            "output_directory": ".test/commands",
-            "output_extension": ".md",
-            "header_template": "{description}\n\n---\n\n",
+            "output_directory": ".test/skills",
+            "argument_hint": False,
         }
         self.config = {"BRANCH_PROD": "main", "BRANCH_DEV": "dev"}
 
@@ -716,21 +878,24 @@ class TestSyncSkill(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _write_skill(self, name, body, **fm_extra):
-        fm_lines = [f'skill: {name}', 'type: skill', f'description: "Test skill: {name}"']
+        fm_lines = [f'name: {name}', 'type: skill', f'description: "Test skill: {name}"']
         for k, v in fm_extra.items():
             fm_lines.append(f'{k}: "{v}"')
-        skill_dir = Path(self.tmpdir) / "skills"
-        skill_dir.mkdir(exist_ok=True)
-        path = skill_dir / f"{name}.md"
+        skill_dir = Path(self.tmpdir) / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        path = skill_dir / "SKILL.md"
         path.write_text(f"---\n" + "\n".join(fm_lines) + "\n---\n\n" + body)
         return path
+
+    def _out(self, name):
+        return self.project_root / ".test" / "skills" / name / "SKILL.md"
 
     def test_writes_file_on_first_sync(self):
         skill_path = self._write_skill("demo", "Hello {{BRANCH_PROD}}")
         args = _make_args()
         result = sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
         self.assertFalse(result)  # not dry-run, so returns False
-        out = self.project_root / ".test" / "commands" / "demo.md"
+        out = self._out("demo")
         self.assertTrue(out.exists())
         content = out.read_text()
         self.assertIn("Hello main", content)
@@ -741,7 +906,7 @@ class TestSyncSkill(unittest.TestCase):
         args = _make_args(dry_run=True)
         result = sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
         self.assertTrue(result)  # would write
-        out = self.project_root / ".test" / "commands" / "demo.md"
+        out = self._out("demo")
         self.assertFalse(out.exists())
 
     def test_idempotent_second_sync(self):
@@ -758,7 +923,7 @@ class TestSyncSkill(unittest.TestCase):
         sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
 
         # Tamper with the output file body (but keep the marker)
-        out = self.project_root / ".test" / "commands" / "demo.md"
+        out = self._out("demo")
         content = out.read_text()
         out.write_text(content.replace("original", "CUSTOMIZED"))
 
@@ -775,7 +940,7 @@ class TestSyncSkill(unittest.TestCase):
         args = _make_args()
         sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
 
-        out = self.project_root / ".test" / "commands" / "demo.md"
+        out = self._out("demo")
         content = out.read_text()
         out.write_text(content.replace("original", "CUSTOMIZED"))
 
@@ -798,20 +963,19 @@ class TestSyncSkill(unittest.TestCase):
         skill_path = self._write_skill("cond", body)
         args = _make_args()
         sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
-        out = self.project_root / ".test" / "commands" / "cond.md"
+        out = self._out("cond")
         content = out.read_text()
         self.assertIn("Dev: dev", content)
         self.assertNotIn("Test:", content)  # BRANCH_TEST not in config
         self.assertIn("Prod: main", content)
 
-    def test_no_invocation_header(self):
-        skill_path = self._write_skill("bare", "bare body", no_invocation_header="true")
+    def test_generated_frontmatter(self):
+        skill_path = self._write_skill("demo", "the body")
         args = _make_args()
         sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
-        out = self.project_root / ".test" / "commands" / "bare.md"
-        content = out.read_text()
-        # Should NOT have the header (description + ---)
-        self.assertTrue(content.startswith("bare body"))
+        content = self._out("demo").read_text()
+        self.assertTrue(content.startswith("---\nname: demo\n"))
+        self.assertIn('description: "Test skill: demo"', content)
 
     def test_output_path_override(self):
         skill_path = self._write_skill(
@@ -822,15 +986,15 @@ class TestSyncSkill(unittest.TestCase):
         sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
         out = self.project_root / ".custom" / "output.md"
         self.assertTrue(out.exists())
+        # Override output is a bare prompt file: body only, no frontmatter
+        self.assertTrue(out.read_text().startswith("custom body"))
         # Default path should NOT exist
-        default_out = self.project_root / ".test" / "commands" / "custom.md"
-        self.assertFalse(default_out.exists())
+        self.assertFalse(self._out("custom").exists())
 
     def test_skips_non_generated_existing_file(self):
         """If a file exists but has no sync marker, skip without --force."""
-        out_dir = self.project_root / ".test" / "commands"
-        out_dir.mkdir(parents=True)
-        out = out_dir / "demo.md"
+        out = self._out("demo")
+        out.parent.mkdir(parents=True)
         out.write_text("User-created file, no marker.\n")
 
         skill_path = self._write_skill("demo", "new content")
@@ -849,13 +1013,120 @@ class TestSyncSkill(unittest.TestCase):
         skill_path.write_text(skill_path.read_text().replace("version-1", "version-2"))
 
         sync.sync_skill(skill_path, self.adapter, self.config, self.project_root, args)
-        out = self.project_root / ".test" / "commands" / "demo.md"
+        out = self._out("demo")
         self.assertIn("version-2", out.read_text())
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # VALIDATION
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestValidateOutputPaths(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_resolved_override_passes(self):
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "{{P}}"', "body")
+        self.assertEqual(sync.validate_output_paths([path], {"P": ".claude/x.md"}), [])
+
+    def test_skill_without_override_is_ignored(self):
+        path = _make_skill(self.tmpdir, "plain",
+                           'name: plain\ndescription: "d"', "body")
+        self.assertEqual(sync.validate_output_paths([path], {}), [])
+
+    def test_undefined_override_placeholder_is_reported(self):
+        """An override left holding {{FOO}} would have sync_skill write to a
+        literal '{{FOO}}' directory. The fix is a missing config key, not a
+        frontmatter change, so it gets its own check and header. #221."""
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "{{PROMPT_PATH}}"',
+                           "body")
+        errors = sync.validate_output_paths([path], {"OTHER": "x"})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("output_path_override has undefined placeholder(s): PROMPT_PATH",
+                      errors[0])
+
+    def test_absolute_override_is_reported(self):
+        """sync_skill joins the override onto project_root, and Path('/p') /
+        '/etc/x' is '/etc/x' — an absolute override escapes the project. #221."""
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "/etc/prompt.md"',
+                           "body")
+        errors = sync.validate_output_paths([path], {})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("is absolute", errors[0])
+
+    def test_traversing_override_is_reported(self):
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "../outside/x.md"',
+                           "body")
+        errors = sync.validate_output_paths([path], {})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("escapes the project root", errors[0])
+
+    def test_empty_override_is_left_to_the_name_check(self):
+        """Resolving to empty makes sync_skill render it as an ordinary skill,
+        so the name check owns it and this validator stays quiet."""
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "{{P}}"', "body")
+        self.assertEqual(sync.validate_output_paths([path], {"P": ""}), [])
+
+    def test_digit_bearing_override_placeholder_is_reported(self):
+        """find_unresolved is load-bearing here, so its charset must match
+        digit-bearing keys or {{PROMPT_PATH2}} ships as a literal path. #221."""
+        path = _make_skill(self.tmpdir, "prompt-dir",
+                           'name: prompt-dir\noutput_path_override: "{{PROMPT_PATH2}}"',
+                           "body")
+        errors = sync.validate_output_paths([path], {"OTHER": "x"})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("PROMPT_PATH2", errors[0])
+
+
+class TestValidateConditionals(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _skill(self, body):
+        return _make_skill(self.tmpdir, "s", 'name: s\ndescription: "d"', body)
+
+    def test_balanced_passes(self):
+        path = self._skill("{{#if FOO}}\na\n{{/if}}\n{{#if !BAR}}\nb\n{{/if}}")
+        self.assertEqual(sync.validate_conditionals([path]), [])
+
+    def test_nested_balanced_passes(self):
+        path = self._skill("{{#if OUTER}}\n{{#if INNER}}\na\n{{/if}}\n{{/if}}")
+        self.assertEqual(sync.validate_conditionals([path]), [])
+
+    def test_unmatched_close_reported(self):
+        path = self._skill("a\n{{/if}}\nb")
+        errors = sync.validate_conditionals([path])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("{{/if}} with no matching {{#if}}", errors[0])
+
+    def test_unclosed_open_reported(self):
+        """The mirror case: apply_conditionals returns the text untouched, so
+        the literal directive line ships into every generated SKILL.md. #221."""
+        path = self._skill("{{#if FOO}}\nbody")
+        errors = sync.validate_conditionals([path])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("{{#if}} with no matching {{/if}}", errors[0])
+
+    def test_error_carries_group_and_line(self):
+        path = self._skill("a\nb\n{{/if}}")
+        errors = sync.validate_conditionals([path])
+        self.assertIn(f"{path.parent.parent.name}/s/SKILL.md:", errors[0])
 
 
 class TestValidatePlaceholders(unittest.TestCase):
@@ -868,26 +1139,33 @@ class TestValidatePlaceholders(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_no_errors_when_all_defined(self):
-        path = _make_skill(self.tmpdir, "ok", 'skill: ok\ndescription: "test"', "Use {{FOO}}")
+        path = _make_skill(self.tmpdir, "ok", 'name: ok\ndescription: "test"', "Use {{FOO}}")
         errors = sync.validate_placeholders([path], {"FOO": "bar"})
         self.assertEqual(errors, [])
 
     def test_reports_undefined_placeholder(self):
-        path = _make_skill(self.tmpdir, "bad", 'skill: bad\ndescription: "test"', "Use {{MISSING}}")
+        path = _make_skill(self.tmpdir, "bad", 'name: bad\ndescription: "test"', "Use {{MISSING}}")
         errors = sync.validate_placeholders([path], {})
         self.assertEqual(len(errors), 1)
         self.assertIn("MISSING", errors[0])
 
+    def test_error_names_the_skill_not_just_SKILL_md(self):
+        """Every SKILL.md shares a filename, so the label must carry the group
+        and skill directory or the report points at nothing. #221."""
+        path = _make_skill(self.tmpdir, "bad", 'name: bad\ndescription: "test"', "Use {{MISSING}}")
+        errors = sync.validate_placeholders([path], {})
+        self.assertIn(f"{path.parent.parent.name}/bad/SKILL.md", errors[0])
+
     def test_placeholder_in_stripped_conditional_not_reported(self):
         body = "{{#if ACTIVE}}\n{{OPTIONAL}}\n{{/if}}\nPlain text."
-        path = _make_skill(self.tmpdir, "cond", 'skill: cond\ndescription: "test"', body)
+        path = _make_skill(self.tmpdir, "cond", 'name: cond\ndescription: "test"', body)
         # ACTIVE is falsy → the block is stripped → OPTIONAL should not be reported
         errors = sync.validate_placeholders([path], {"ACTIVE": ""})
         self.assertEqual(errors, [])
 
     def test_placeholder_in_kept_conditional_reported(self):
         body = "{{#if ACTIVE}}\n{{OPTIONAL}}\n{{/if}}"
-        path = _make_skill(self.tmpdir, "cond", 'skill: cond\ndescription: "test"', body)
+        path = _make_skill(self.tmpdir, "cond", 'name: cond\ndescription: "test"', body)
         # ACTIVE is truthy → OPTIONAL is in final output → should be reported
         errors = sync.validate_placeholders([path], {"ACTIVE": "yes"})
         self.assertEqual(len(errors), 1)
@@ -914,7 +1192,7 @@ class TestValidateCommandShapes(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _skill(self, body):
-        return _make_skill(self.tmpdir, "s", 'skill: s\ndescription: "t"', body)
+        return _make_skill(self.tmpdir, "s", 'name: s\ndescription: "t"', body)
 
     def test_clean_command_passes(self):
         path = self._skill("```bash\ngit status\n```")
@@ -1149,6 +1427,248 @@ class TestMainCLI(unittest.TestCase):
             with patch("sys.argv", ["sync.py", "--config", str(cfg), "--validate"]):
                 sync.main()  # should not raise SystemExit(1)
 
+    def _fake_checkout(self, tmpdir, skill_dir_name, frontmatter, extra_groups=None,
+                       in_repo=False):
+        """Build a throwaway CodeCannon checkout containing a single skill.
+
+        Symlinks the pieces main() reads from CODECANNON_DIR (adapter defs,
+        schema, permissions) back to the real repo, so only the skill under
+        test is synthetic. `extra_groups` adds {group: {dir: frontmatter}}
+        alongside the enabled `testgroup`. `in_repo=True` makes the checkout
+        its own project root, the shape that widens auditing to every group.
+        Returns the config path to pass as --config.
+        """
+        # Resolved: os.chdir() below yields a resolved cwd, and main() compares
+        # CODECANNON_DIR against it to decide whether it is running in-repo.
+        fake_root = (Path(tmpdir) / "codecannon").resolve()
+        fake_root.mkdir()
+        self.fake_root = fake_root
+        for entry in ("adapters", "config.schema.yaml", "permissions.yaml"):
+            (fake_root / entry).symlink_to(REPO_ROOT / entry)
+
+        groups = {"testgroup": {skill_dir_name: frontmatter}}
+        for group, skills in (extra_groups or {}).items():
+            groups.setdefault(group, {}).update(skills)
+        for group, skills in groups.items():
+            for dir_name, fm in skills.items():
+                skill_dir = fake_root / "skills" / group / dir_name
+                skill_dir.mkdir(parents=True)
+                (skill_dir / "SKILL.md").write_text(f"---\n{fm}\n---\n\nbody\n")
+
+        project_root = fake_root if in_repo else Path(tmpdir) / "project"
+        if not in_repo:
+            project_root.mkdir()
+        cfg = project_root / ".codecannon.yaml"
+        cfg.write_text("skill_group: testgroup\nadapters:\n  - claude\nconfig:\n  FOO: bar\n")
+        os.chdir(project_root)
+        return cfg
+
+    def test_name_directory_mismatch_blocks_write(self):
+        """A frontmatter-name/directory mismatch must abort the write path
+        before any output is produced — not just under --validate. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "real-dir", 'name: other-name\ndescription: "d"')
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    with self.assertRaises(SystemExit) as ctx:
+                        sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            written = list((Path(tmpdir) / "project").rglob("SKILL.md"))
+            self.assertEqual(written, [], "no output should be written when the gate fails")
+
+    def test_name_directory_mismatch_blocks_dry_run(self):
+        """CI runs --dry-run, so the gate must fail there too. #221.
+
+        --dry-run exits 1 on pending writes regardless, so assert on the
+        reason: the run must stop at the name gate and never reach the
+        sync loop that reports what it would write.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "real-dir", 'name: other-name\ndescription: "d"')
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg), "--dry-run"]):
+                    with contextlib.redirect_stdout(buf):
+                        with self.assertRaises(SystemExit) as ctx:
+                            sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            out = buf.getvalue()
+            self.assertIn("Skill-name validation failed", out)
+            self.assertNotIn("would write", out)
+
+    def test_validate_reports_all_checks_despite_name_error(self):
+        """--validate is a report, not a fail-fast gate: a name error must not
+        short-circuit the placeholder/permission/command-shape results, or each
+        class of problem costs its own round trip. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "real-dir", 'name: other-name\ndescription: "d"')
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg), "--validate"]):
+                    with contextlib.redirect_stdout(buf):
+                        with self.assertRaises(SystemExit) as ctx:
+                            sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            out = buf.getvalue()
+            self.assertIn("Skill-name validation failed", out)
+            self.assertNotIn("Skill-name validation passed", out)
+            self.assertIn("Placeholder validation", out)
+            self.assertIn("Permission validation", out)
+            self.assertIn("Command-shape validation", out)
+
+    def test_codecannon_dir_is_resolved_when_loaded_via_symlink(self):
+        """CODECANNON_DIR is compared against Path.cwd(), which is always
+        symlink-resolved. Loaded through a symlinked path it must still equal
+        the real directory, or any symlink in the checkout silently narrows the
+        audit scope with no error and exit 0. #221."""
+        import importlib.util
+        with tempfile.TemporaryDirectory() as tmpdir:
+            link = Path(tmpdir) / "linked-checkout"
+            link.symlink_to(REPO_ROOT)
+            spec = importlib.util.spec_from_file_location(
+                "sync_via_symlink", link / "sync.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.assertEqual(mod.CODECANNON_DIR, REPO_ROOT.resolve())
+
+    def _checkout_with_bad_other_group(self, tmpdir):
+        return self._fake_checkout(
+            tmpdir, "good-skill", 'name: good-skill\ndescription: "d"',
+            extra_groups={"othergroup": {"real-dir": 'name: other-name\ndescription: "d"'}},
+            in_repo=True)
+
+    def test_name_violation_in_non_enabled_group_fails_validate(self):
+        """Inside the CodeCannon repo, --validate audits every group — same as
+        the permission check — so a violation in a group nobody has enabled
+        can't ship green through CI, which runs --validate. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._checkout_with_bad_other_group(tmpdir)
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg), "--validate"]):
+                    with contextlib.redirect_stdout(buf):
+                        with self.assertRaises(SystemExit) as ctx:
+                            sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            self.assertIn("other-name", buf.getvalue())
+
+    def test_unbalanced_conditional_blocks_write(self):
+        """An unbalanced directive silently strands every later block in the
+        file, and --dry-run can't see it (it compares against equally-broken
+        committed output), so the gate must stop the write. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "good-skill", 'name: good-skill\ndescription: "d"')
+            skill = self.fake_root / "skills" / "testgroup" / "good-skill" / "SKILL.md"
+            skill.write_text(skill.read_text() + "\n{{#if FOO}}\nstranded\n")
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    with contextlib.redirect_stdout(buf):
+                        with self.assertRaises(SystemExit) as ctx:
+                            sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            self.assertIn("Conditional validation failed", buf.getvalue())
+            written = list((Path(tmpdir) / "project").rglob("SKILL.md"))
+            self.assertEqual(written, [], "nothing should be written")
+
+    def test_validate_pass_messages_state_their_scope(self):
+        """Other groups are checked without placeholder resolution and their
+        overrides aren't checked at all, so the pass lines must not imply full
+        coverage. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "good-skill", 'name: good-skill\ndescription: "d"',
+                extra_groups={"othergroup": {"fine": 'name: fine\ndescription: "d"'}},
+                in_repo=True)
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg), "--validate"]):
+                    with contextlib.redirect_stdout(buf):
+                        sync.main()
+            out = buf.getvalue()
+            self.assertIn("other groups checked without placeholder resolution", out)
+            self.assertIn("all override paths in testgroup are in-project", out)
+
+    def test_name_violation_in_non_enabled_group_does_not_block_write(self):
+        """Non-enabled groups are never handed to sync_skill, so they can't
+        produce bad output and must not block a local sync — otherwise a WIP
+        skill in an unrelated group breaks ./sync.py --force. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._checkout_with_bad_other_group(tmpdir)
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    sync.main()
+            out = self.fake_root / ".claude" / "skills" / "good-skill" / "SKILL.md"
+            self.assertTrue(out.exists(), "enabled group should still sync")
+
+    def test_unresolved_override_in_enabled_group_blocks_write(self):
+        """The enabled group's overrides do reach sync_skill, so an undefined
+        placeholder there must stop the write under its own header. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "prompt-dir",
+                'name: prompt-dir\ndescription: "d"\n'
+                'output_path_override: "{{NOT_DEFINED}}"')
+            buf = io.StringIO()
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    with contextlib.redirect_stdout(buf):
+                        with self.assertRaises(SystemExit) as ctx:
+                            sync.main()
+            self.assertEqual(ctx.exception.code, 1)
+            out = buf.getvalue()
+            self.assertIn("Output-path validation failed", out)
+            self.assertIn("NOT_DEFINED", out)
+            self.assertNotIn("Skill-name validation failed", out)
+
+    def test_other_group_override_placeholder_does_not_block_sync(self):
+        """The widened audit spans groups, but config is per-enabled-group. A
+        non-enabled group's override placeholder is not resolvable against the
+        current config and must not hard-fail the sync. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "good-skill", 'name: good-skill\ndescription: "d"',
+                extra_groups={"othergroup": {"prompt-dir": (
+                    'name: prompt-dir\ndescription: "d"\n'
+                    'output_path_override: "{{OTHER_GROUP_PATH}}"')}},
+                in_repo=True)
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    sync.main()
+            out = self.fake_root / ".claude" / "skills" / "good-skill" / "SKILL.md"
+            self.assertTrue(out.exists(), "enabled group should still sync")
+
+    def test_prompt_only_entry_does_not_block_sync(self):
+        """An output_path_override entry is exempt from the spec, so a
+        name/directory mismatch on one must not abort the run. #221."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "good-skill", 'name: good-skill\ndescription: "d"',
+                extra_groups={"testgroup": {
+                    "prompt-dir": 'name: Some_Other_Name\n'
+                                  'output_path_override: ".claude/prompt.md"'}})
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    sync.main()
+            project = Path(tmpdir) / "project"
+            self.assertTrue((project / ".claude" / "skills" / "good-skill" / "SKILL.md").exists())
+            self.assertTrue((project / ".claude" / "prompt.md").exists())
+
+    def test_spec_compliant_skill_syncs(self):
+        """The gate must not block a compliant skill from being written."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = self._fake_checkout(
+                tmpdir, "good-skill", 'name: good-skill\ndescription: "d"')
+            with patch("sync.CODECANNON_DIR", self.fake_root):
+                with patch("sys.argv", ["sync.py", "--config", str(cfg)]):
+                    sync.main()
+            out = Path(tmpdir) / "project" / ".claude" / "skills" / "good-skill" / "SKILL.md"
+            self.assertTrue(out.exists(), "compliant skill should be written")
+
     def test_nonexistent_skill_group_exits_1(self):
         """skill_group naming a directory that doesn't exist should fail loudly."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1196,16 +1716,18 @@ class TestGoldenFileSnapshots(unittest.TestCase):
             self.skipTest("skill_group not set in .codecannon.yaml")
 
         skills_dir = REPO_ROOT / "skills" / skill_group
-        skill_files = sorted(skills_dir.glob("*.md"))
+        skill_files = sorted(skills_dir.glob("*/SKILL.md"))
         args = _make_args()
 
         tmpdir = Path(tempfile.mkdtemp())
         try:
             stale = []
+            seen_adapters = set()
             for adapter_name in adapters_list:
                 adapter = sync.load_adapter(adapter_name)
-                if not adapter:
+                if not adapter or adapter["name"] in seen_adapters:
                     continue
+                seen_adapters.add(adapter["name"])
                 for skill_path in skill_files:
                     # Render via sync_skill into the temp directory
                     sync.sync_skill(skill_path, adapter, project_config, tmpdir, args)
@@ -1213,16 +1735,15 @@ class TestGoldenFileSnapshots(unittest.TestCase):
                     # Determine the output path (mirrors sync_skill logic)
                     raw = skill_path.read_text()
                     fm, _ = sync.parse_frontmatter(raw)
-                    skill_name = fm.get("skill", skill_path.stem)
+                    skill_name = fm.get("name", skill_path.parent.name)
                     output_path_override = fm.get("output_path_override", "")
                     if output_path_override:
                         output_path_override = sync.apply_placeholders(output_path_override, project_config)
                         fresh_path = tmpdir / output_path_override
                         disk_path = project_root / output_path_override
                     else:
-                        ext = adapter["output_extension"]
-                        fresh_path = tmpdir / adapter["output_directory"] / f"{skill_name}{ext}"
-                        disk_path = project_root / adapter["output_directory"] / f"{skill_name}{ext}"
+                        fresh_path = tmpdir / adapter["output_directory"] / skill_name / "SKILL.md"
+                        disk_path = project_root / adapter["output_directory"] / skill_name / "SKILL.md"
 
                     if not disk_path.exists():
                         stale.append(f"{adapter_name}/{skill_name}: file missing at {disk_path}")

@@ -65,6 +65,9 @@ abandon:
 	echo "Abandoned and deleted $$branch."
 
 # Merge the current PR into the integration branch (after review).
+# Each step before the reset exits on failure explicitly: an `&&` chain is cut
+# by the `;` after an `if … fi`, so a failed merge or checkout would otherwise
+# fall through to `git reset --hard` on the feature branch.
 merge:
 	@branch=$$(git rev-parse --abbrev-ref HEAD); \
 	if [ "$$branch" = "$(PRODUCTION_BRANCH)" ] || [ "$$branch" = "$(INTEGRATION_BRANCH)" ]; then \
@@ -81,12 +84,12 @@ merge:
 	if [ "$$pr_base" = "$(PRODUCTION_BRANCH)" ]; then \
 		echo "Error: refusing to merge PR targeting $(PRODUCTION_BRANCH). Merge to $(PRODUCTION_BRANCH) manually."; exit 1; \
 	fi; \
-	gh pr merge --merge && \
-	git checkout $(INTEGRATION_BRANCH) && \
+	gh pr merge --merge || exit 1; \
+	git checkout $(INTEGRATION_BRANCH) || exit 1; \
 	if ! git diff --quiet || ! git diff --cached --quiet; then \
 		echo "Error: uncommitted changes on $(INTEGRATION_BRANCH); refusing to reset to origin. Resolve manually."; exit 1; \
 	fi; \
-	git fetch origin $(INTEGRATION_BRANCH) && \
+	git fetch origin $(INTEGRATION_BRANCH) || exit 1; \
 	ahead=$$(git rev-list --count origin/$(INTEGRATION_BRANCH)..HEAD); \
 	if [ "$$ahead" != "0" ]; then \
 		echo "Warning: discarding $$ahead local-only commit(s) on $(INTEGRATION_BRANCH) to match origin (recover via 'git reflog' within 90 days):"; \

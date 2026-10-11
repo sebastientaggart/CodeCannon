@@ -9,5 +9,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Check for sync drift
         run: |
-          ./sync.py --dry-run
+          # placeholder, permission, and command-shape checks, reported together;
+          # skill names are gated on every path, including the --dry-run below
+          ./sync.py --validate
           # exits non-zero if any files would be written
+          ./sync.py --dry-run

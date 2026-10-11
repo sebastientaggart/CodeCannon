@@ -46,7 +46,7 @@ dev:
 	./sync.py --validate
 	./sync.py --dry-run
 
-# Regenerate .claude/commands/ and other adapter output from the enabled skill group.
+# Regenerate .claude/skills/ and other adapter output from the enabled skill group.
 sync:
 	./sync.py
 
@@ -130,7 +130,7 @@ roll-call:
 		version="unknown"; \
 	fi; \
 	if [ -f .codecannon.yaml ]; then \
-		adapters=$$(grep -E '^\s*-\s+' .codecannon.yaml | grep -io 'claude\|cursor\|gemini\|codex' | sort -u | paste -sd ', ' -); \
+		adapters=$$(grep -E '^\s*-\s+' .codecannon.yaml | grep -io 'claude\|cursor\|gemini\|codex\|agents' | sort -u | paste -sd ', ' -); \
 	fi; \
 	adapters=$${adapters:-none detected}; \
 	date=$$(date +%Y-%m-%d); \

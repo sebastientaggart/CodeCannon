@@ -30,7 +30,7 @@ When the submodule is present, `/setup` runs these checks in order, stopping at 
 4. **Inside a GitHub repo** — remote configured?
 5. **`.codecannon.yaml` present** — project config exists?
 6. **Config values valid** — do branch names and commands point to real things?
-7. **`.claude/commands/` populated** — has sync been run?
+7. **Skills directories populated** — has sync been run?
 
 Each check explains the problem and shows the fix command.
 

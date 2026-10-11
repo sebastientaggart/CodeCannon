@@ -1,0 +1,14 @@
+# Shared cross-tool skills directory per the Agent Skills spec (agentskills.io).
+# Codex CLI, Cursor, and Gemini CLI all read .agents/skills/<name>/SKILL.md
+# natively (for Gemini it even takes precedence over .gemini/skills/), so one
+# rendered output serves all three. The legacy codex/cursor/gemini adapter
+# names alias to this adapter.
+agent: agents
+description: Shared Agent Skills output (Codex CLI, Cursor, Gemini CLI)
+output_directory: .agents/skills
+argument_hint: false
+notes: |
+  Sub-agent spawning (used in the /submit-for-review review step) is not
+  available in these tools. That step must be performed manually by pasting
+  the review-agent prompt into a new session. Skills are triggered by
+  description matching, or by name where the tool supports it.

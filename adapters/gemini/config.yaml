@@ -1,8 +1,4 @@
-agent: gemini
-description: Google Gemini CLI agent skills
-output_directory: .gemini/skills
-output_extension: /SKILL.md
-notes: |
-  Sub-agent spawning (used in the /submit-for-review review step) is not available in Gemini CLI.
-  That step must be performed manually by pasting the review-agent prompt into a new session.
-  Skills are triggered by description matching during conversation.
+# Legacy adapter name, kept so existing .codecannon.yaml files keep working.
+# Gemini CLI reads the shared .agents/skills/ alias with higher precedence
+# than .gemini/skills/, so this resolves to the `agents` adapter.
+alias: agents

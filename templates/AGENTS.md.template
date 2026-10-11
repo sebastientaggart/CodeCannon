@@ -35,7 +35,7 @@ This project uses the **Lightweight / Standard / Governed** workflow profile. Se
 
 ## This file is a team contract
 
-`.codecannon.yaml` and the generated `.claude/commands/` files are committed to this repo. Every developer gets a consistent workflow on `git clone` + `git submodule update --init` — no further setup required.
+`.codecannon.yaml` and the generated skills directories (`.claude/skills/`, `.agents/skills/`) are committed to this repo. Every developer gets a consistent workflow on `git clone` + `git submodule update --init` — no further setup required.
 
 To update skills: `git submodule update --remote CodeCannon && CodeCannon/sync.py`
 To reconfigure: edit `.codecannon.yaml` and re-run `CodeCannon/sync.py`, then commit the changes.

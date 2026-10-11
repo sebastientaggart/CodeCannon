@@ -1,8 +1,10 @@
+# Claude Code — project skills per the Agent Skills spec (agentskills.io).
+# Claude Code loads .claude/skills/<name>/SKILL.md and exposes each as /<name>.
 agent: claude
-description: Claude Code slash commands
-output_directory: .claude/commands
-output_extension: .md
+description: Claude Code project skills
+output_directory: .claude/skills
+# Claude Code extends the spec with argument-hint frontmatter (autocomplete hint).
+argument_hint: true
 # Where the committed permission allowlist is written (relative to the project
-# root). Claude Code reads permissions from .claude/settings.json — note this
-# is the parent of output_directory, not output_directory itself.
+# root). Claude Code reads permissions from .claude/settings.json.
 permissions_file: .claude/settings.json
