@@ -9,7 +9,7 @@ Bump the project version, create a GitHub Release, and promote to production.
 `/deploy` is the final step in the workflow. It combines version bumping and release creation into a single command. Its behavior varies by branching model:
 
 - **Trunk mode:** Optionally bumps the version, then creates a GitHub Release from `BRANCH_PROD` using the version tag.
-- **Two-branch mode:** Optionally bumps the version, opens a promotion PR from `BRANCH_DEV` to `BRANCH_PROD`, merges it (which auto-closes linked issues), and creates a GitHub Release.
+- **Two-branch mode:** Optionally bumps the version, opens a promotion PR into `BRANCH_PROD` from a throwaway `release/vX.Y.Z` branch cut at the head of `BRANCH_DEV`, merges it (which auto-closes linked issues), and creates a GitHub Release.
 - **Three-branch mode:** Same as two-branch but promotes from `BRANCH_TEST` to `BRANCH_PROD`.
 
 ## Usage
@@ -55,6 +55,8 @@ No arguments. Must be run from the correct branch (determined by your branching 
 **The public Release has a second, version-named gate.** Single-word `release` authorizes the promotion and merge, but creating the public GitHub Release asks you to paste `publish vX.Y.Z` (with the real version). Two reasons: (1) it names the exact version you're publishing, so the authorization is unambiguous in the audit trail; and (2) Claude Code's auto-mode safety classifier treats publishing a Release as a public-surface action that needs authorization naming the release — a bare word doesn't satisfy it. Making this an expected, designed step means the publish never stops as a surprise mid-flow after the merge has already landed. If a harness still blocks after you confirm, re-paste `publish vX.Y.Z release` to unblock.
 
 **Issues close on release, not on feature merge.** In multi-branch modes, feature PRs use `Closes #N`, but the keyword is inert until it reaches the default branch — so issues only auto-close when the promotion PR merges to `BRANCH_PROD`. This means issues stay open through the QA/staging phase, giving you visibility into what's deployed where. `/deploy` parses each constituent PR's `Closes #N` lines into a **close set** (reproduced verbatim into the promotion PR, so nothing is dropped) and keeps `Related to #N` / legacy `Issue #N` references in a separate **reference set** that the human gate lists as "referenced but not closing" — letting you catch any straggler that should have closed.
+
+**The promotion PR comes from a throwaway branch.** GitHub's "Automatically delete head branches" setting deletes a merged PR's head branch. If the promotion PR used `BRANCH_DEV` (or `BRANCH_TEST`) as its head, every release would delete that long-lived branch from the remote unless branch protection blocked it — and protection isn't available on every plan. So `/deploy` pushes `release/vX.Y.Z` at the deploy branch's head, promotes from that, and removes it afterwards. The long-lived branch is never a PR head, so the setting is safe to leave on.
 
 **State check surfaces surprises early.** Showing open unmerged PRs at the start prevents accidental releases that miss in-flight work.
 
